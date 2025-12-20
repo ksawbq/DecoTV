@@ -38,6 +38,7 @@ function SearchPageClient() {
   const searchParams = useSearchParams();
   const currentQueryRef = useRef<string>('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [normalizedQuery, setNormalizedQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
@@ -49,7 +50,7 @@ function SearchPageClient() {
   const flushTimerRef = useRef<number | null>(null);
   const [useFluidSearch, setUseFluidSearch] = useState(true);
   // 聚合卡片 refs 与聚合统计缓存
-  const groupRefs = useRef<Map<string, React.RefObject<VideoCardHandle>>>(
+  const groupRefs = useRef<Map<string, React.RefObject<VideoCardHandle | null>>>(
     new Map()
   );
   const groupStatsRef = useRef<
@@ -62,7 +63,7 @@ function SearchPageClient() {
   const getGroupRef = (key: string) => {
     let ref = groupRefs.current.get(key);
     if (!ref) {
-      ref = React.createRef<VideoCardHandle>();
+      ref = React.createRef<VideoCardHandle | null>();
       groupRefs.current.set(key, ref);
     }
     return ref;
@@ -199,17 +200,27 @@ function SearchPageClient() {
     const query = currentQueryRef.current.trim().toLowerCase();
     const queryNoSpace = query.replace(/\s+/g, '');
 
+    const normQuery = normalizedQuery
+      ? normalizedQuery.trim().toLowerCase()
+      : query;
+    const normQueryNoSpace = normQuery.replace(/\s+/g, '');
+
     // 过滤：只保留标题相关的结果
     const relevantResults = searchResults.filter((item) => {
       const title = item.title.toLowerCase();
       const titleNoSpace = title.replace(/\s+/g, '');
 
-      // 包含完整关键词
-      if (title.includes(query) || titleNoSpace.includes(queryNoSpace)) {
+      // 包含完整关键词 (检查原词和转换后的词)
+      if (
+        title.includes(query) ||
+        titleNoSpace.includes(queryNoSpace) ||
+        title.includes(normQuery) ||
+        titleNoSpace.includes(normQueryNoSpace)
+      ) {
         return true;
       }
 
-      // 顺序包含关键词的所有字符
+      // 顺序包含关键词的所有字符 (检查原词)
       let queryIndex = 0;
       for (
         let i = 0;
@@ -220,7 +231,24 @@ function SearchPageClient() {
           queryIndex++;
         }
       }
-      return queryIndex === queryNoSpace.length;
+      if (queryIndex === queryNoSpace.length) return true;
+
+      // 顺序包含关键词的所有字符 (检查转换后的词)
+      if (normQuery !== query) {
+        let normIndex = 0;
+        for (
+          let i = 0;
+          i < titleNoSpace.length && normIndex < normQueryNoSpace.length;
+          i++
+        ) {
+          if (titleNoSpace[i] === normQueryNoSpace[normIndex]) {
+            normIndex++;
+          }
+        }
+        if (normIndex === normQueryNoSpace.length) return true;
+      }
+
+      return false;
     });
 
     const map = new Map<string, SearchResult[]>();
@@ -480,6 +508,7 @@ function SearchPageClient() {
 
     if (query) {
       setSearchQuery(query);
+      setNormalizedQuery(''); // 重置
       // 新搜索：关闭旧连接并清空结果
       if (eventSourceRef.current) {
         try {
@@ -534,6 +563,9 @@ function SearchPageClient() {
             switch (payload.type) {
               case 'start':
                 setTotalSources(payload.totalSources || 0);
+                if (payload.normalizedQuery) {
+                  setNormalizedQuery(payload.normalizedQuery);
+                }
                 setCompletedSources(0);
                 break;
               case 'source_result': {
@@ -616,6 +648,10 @@ function SearchPageClient() {
           .then((response) => response.json())
           .then((data) => {
             if (currentQueryRef.current !== trimmed) return;
+
+            if (data.normalizedQuery) {
+              setNormalizedQuery(data.normalizedQuery);
+            }
 
             if (data.results && Array.isArray(data.results)) {
               // ✨ 后端已按相关性排序，直接使用结果
@@ -847,7 +883,7 @@ function SearchPageClient() {
               ) : (
                 <div
                   key={`search-results-${viewMode}`}
-                  className='justify-start grid grid-cols-3 gap-x-2 gap-y-14 sm:gap-y-20 px-0 sm:px-2 sm:grid-cols-[repeat(auto-fill,_minmax(11rem,_1fr))] sm:gap-x-8'
+                  className='justify-start grid grid-cols-3 gap-x-2 gap-y-14 sm:gap-y-20 px-0 sm:px-2 sm:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] sm:gap-x-8'
                 >
                   {viewMode === 'agg'
                     ? filteredAggResults.map(([mapKey, group]) => {
@@ -969,7 +1005,7 @@ function SearchPageClient() {
       {/* 返回顶部悬浮按钮 */}
       <button
         onClick={scrollToTop}
-        className={`fixed bottom-20 md:bottom-6 right-6 z-[500] w-12 h-12 bg-green-500/90 hover:bg-green-500 text-white rounded-full shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out flex items-center justify-center group ${
+        className={`fixed bottom-20 md:bottom-6 right-6 z-500 w-12 h-12 bg-green-500/90 hover:bg-green-500 text-white rounded-full shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out flex items-center justify-center group ${
           showBackToTop
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 translate-y-4 pointer-events-none'

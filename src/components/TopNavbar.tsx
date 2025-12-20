@@ -26,7 +26,7 @@ export default function TopNavbar() {
   };
 
   return (
-    <header className='hidden md:block fixed top-0 left-0 right-0 z-[900]'>
+    <header className='hidden md:block fixed top-0 left-0 right-0 z-900'>
       <div className='mx-auto max-w-7xl px-4'>
         <div className='mt-2 rounded-2xl border border-white/10 bg-white/30 dark:bg-gray-900/40 shadow-[0_0_1px_0_rgba(255,255,255,0.5),0_0_40px_-10px_rgba(99,102,241,0.5)] backdrop-blur-xl'>
           <nav className='flex items-center justify-between h-14 px-3'>
@@ -36,7 +36,7 @@ export default function TopNavbar() {
                 href='/'
                 className='shrink-0 select-none hover:opacity-90 transition-opacity'
               >
-                <span className='text-lg font-extrabold tracking-tight neon-text'>
+                <span className='text-xl font-black tracking-tight deco-brand'>
                   {siteName || 'DecoTV'}
                 </span>
               </Link>
