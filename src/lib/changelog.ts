@@ -11,6 +11,52 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: '1.1.0',
+    date: '2026-01-01',
+    added: [
+      '🎨 移动端悬浮导航: 全新 iOS 风格磨砂胶囊导航栏，支持动态主题色与横向滚动',
+      '🌈 极光流体背景: PC 端 CSS 极光动画取代 Canvas 粒子；移动端静态 Lite 版零功耗',
+      '🔀 数据源筛选器: 重构为"单行横滑 + 模态框"模式，节省空间',
+    ],
+    changed: [
+      '⚡ 主线程释放: 移除 JS 粒子计算，解决 PC 端导航栏点击卡顿问题',
+      '🚀 交互优化: 禁用导航栏预加载，提升点击响应速度',
+      '📜 滚动优化: 移除 Snap 效果，修复分类栏"回弹死锁"与"点击穿透"',
+      '🎨 UI 细节适配: 移动端导航栏亮/暗色模式自适应',
+    ],
+    fixed: [
+      '🔐 Docker 鉴权: 修复未配置 AUTH_SECRET 导致后台 401 错误',
+      '🖼️ 豆瓣爬虫: 修复部分演员头像缺失，增加默认头像与高清图替换',
+      '🏗️ 构建修复: 修复 MobileBottomNav 类型错误导致 GitHub Actions 失败',
+    ],
+  },
+  {
+    version: '1.0.0',
+    date: '2025-12-28',
+    added: [
+      '🎉 首个正式稳定版本 (Stable Release)',
+      '🏠 混合存储策略: 无 Redis 时自动降级为浏览器 localStorage',
+      '🌐 CMS 全量代理: 解决 Mixed Content 和 CORS 问题，User-Agent 伪装防拦截',
+      '🛡️ 纵深防御: Config 白名单 + Proxy Firewall 双重熔断机制',
+      '🎬 FilterBar 多行布局: Flex-Wrap 自动换行，PC 端信息展示更高效',
+      '⚡ 自动选中首分类: 切换视频源后立即加载内容',
+    ],
+    changed: [
+      '⚙️ 框架升级: Next.js 16.1.0 + React 19 + Turbopack',
+      '📦 CMS 代理切换为 Node.js Runtime，提升 HTTP 兼容性',
+      '🎨 DoubanSelector 重写为卡片式多行布局，移除横向滚动',
+      '🔄 所有外部 URL 统一走 /api/proxy/cms 代理',
+    ],
+    fixed: [
+      '🔐 修复 Admin 面板本地模式 Unauthorized 鉴权问题',
+      '💛 修复 DndContext 嵌套导致的 SSR Hydration 崩溃',
+      '📊 修复切换视频源后分类栏为空的问题',
+      '🛰️ 修复 HTTPS 页面加载 HTTP 图片失败 (wsrv.nl 代理)',
+      '🔇 修复 DoubanSelector 无限重渲染性能问题',
+      '🔒 修复 OrionTV 客户端缓存导致的隐私泄露问题',
+    ],
+  },
+  {
     version: '0.9.0',
     date: '2025-12-20',
     added: [
@@ -30,9 +76,7 @@ export const changelog: ChangelogEntry[] = [
       '🔧 启用 Next.js Turbopack 构建模式，提升开发体验',
       '🎨 更新 Tailwind CSS 类名为规范写法（bg-gradient → bg-linear 等）',
     ],
-    fixed: [
-      '🐛 修复亮色模式下影片卡片标题和来源名称显示不清晰的问题',
-    ],
+    fixed: ['🐛 修复亮色模式下影片卡片标题和来源名称显示不清晰的问题'],
   },
   {
     version: '0.8.0',

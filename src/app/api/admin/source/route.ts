@@ -2,7 +2,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
+import { getAuthInfoFromCookie, getAuthSecret } from '@/lib/auth';
 import { getConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
@@ -26,12 +26,22 @@ interface BaseBody {
 
 export async function POST(request: NextRequest) {
   const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
-  if (storageType === 'localstorage') {
+  const hasRedis = !!(process.env.REDIS_URL || process.env.KV_REST_API_URL);
+  const isLocalMode = storageType === 'localstorage' && !hasRedis;
+
+  // 预检 auth secret，缺失时在开发/Docker 环境下给出警告（不影响本地免密模式）
+  getAuthSecret();
+
+  // 🔐 本地模式（无数据库）：跳过认证，返回成功
+  // 安全性说明：仅当没有配置任何数据库时才启用此模式
+  if (isLocalMode) {
     return NextResponse.json(
       {
-        error: '不支持本地存储进行管理员配置',
+        ok: true,
+        storageMode: 'local',
+        message: '请在前端保存配置到 localStorage',
       },
-      { status: 400 }
+      { headers: { 'Cache-Control': 'no-store' } },
     );
   }
 
@@ -67,7 +77,7 @@ export async function POST(request: NextRequest) {
     // 权限与身份校验
     if (username !== process.env.USERNAME) {
       const userEntry = adminConfig.UserConfig.Users.find(
-        (u) => u.username === username
+        (u) => u.username === username,
       );
       if (!userEntry || userEntry.role !== 'admin' || userEntry.banned) {
         return NextResponse.json({ error: '权限不足' }, { status: 401 });
@@ -166,7 +176,7 @@ export async function POST(request: NextRequest) {
         if (!Array.isArray(keys) || keys.length === 0) {
           return NextResponse.json(
             { error: '缺少 keys 参数或为空' },
-            { status: 400 }
+            { status: 400 },
           );
         }
         keys.forEach((key) => {
@@ -182,7 +192,7 @@ export async function POST(request: NextRequest) {
         if (!Array.isArray(keys) || keys.length === 0) {
           return NextResponse.json(
             { error: '缺少 keys 参数或为空' },
-            { status: 400 }
+            { status: 400 },
           );
         }
         keys.forEach((key) => {
@@ -198,7 +208,7 @@ export async function POST(request: NextRequest) {
         if (!Array.isArray(keys) || keys.length === 0) {
           return NextResponse.json(
             { error: '缺少 keys 参数或为空' },
-            { status: 400 }
+            { status: 400 },
           );
         }
         // 过滤掉 from=config 的源，但不报错
@@ -222,7 +232,7 @@ export async function POST(request: NextRequest) {
             adminConfig.UserConfig.Tags.forEach((tag) => {
               if (tag.enabledApis) {
                 tag.enabledApis = tag.enabledApis.filter(
-                  (api) => !keysToDelete.includes(api)
+                  (api) => !keysToDelete.includes(api),
                 );
               }
             });
@@ -232,7 +242,7 @@ export async function POST(request: NextRequest) {
           adminConfig.UserConfig.Users.forEach((user) => {
             if (user.enabledApis) {
               user.enabledApis = user.enabledApis.filter(
-                (api) => !keysToDelete.includes(api)
+                (api) => !keysToDelete.includes(api),
               );
             }
           });
@@ -244,7 +254,7 @@ export async function POST(request: NextRequest) {
         if (!Array.isArray(order)) {
           return NextResponse.json(
             { error: '排序列表格式错误' },
-            { status: 400 }
+            { status: 400 },
           );
         }
         const map = new Map(adminConfig.SourceConfig.map((s) => [s.key, s]));
@@ -276,7 +286,7 @@ export async function POST(request: NextRequest) {
         headers: {
           'Cache-Control': 'no-store',
         },
-      }
+      },
     );
   } catch (error) {
     console.error('视频源管理操作失败:', error);
@@ -285,7 +295,7 @@ export async function POST(request: NextRequest) {
         error: '视频源管理操作失败',
         details: (error as Error).message,
       },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
