@@ -16,6 +16,8 @@ export interface AdminConfig {
     DoubanImageProxy: string;
     DisableYellowFilter: boolean;
     FluidSearch: boolean;
+    // 登录页面背景图
+    LoginBackground?: string;
   };
   UserConfig: {
     Users: {

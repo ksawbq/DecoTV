@@ -3,6 +3,7 @@
 'use client';
 
 import Artplayer from 'artplayer';
+import artplayerPluginDanmuku from 'artplayer-plugin-danmuku';
 import Hls from 'hls.js';
 import { Heart } from 'lucide-react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -23,10 +24,13 @@ import {
 } from '@/lib/db.client';
 import { SearchResult } from '@/lib/types';
 import { getVideoResolutionFromM3u8, processImageUrl } from '@/lib/utils';
+import { type DanmuItem, useDanmu } from '@/hooks/useDanmu';
 import { useDoubanInfo } from '@/hooks/useDoubanInfo';
 
+import { DanmuSettingsPanel } from '@/components/DanmuSettingsPanel';
 import EpisodeSelector from '@/components/EpisodeSelector';
 import { MovieMetaInfo } from '@/components/MovieMetaInfo';
+import { MovieRecommends } from '@/components/MovieRecommends';
 import { MovieReviews } from '@/components/MovieReviews';
 import PageLayout from '@/components/PageLayout';
 import SkipConfigPanel from '@/components/SkipConfigPanel';
@@ -231,6 +235,10 @@ function PlayPageClient() {
   // 跳过片头片尾设置面板状态
   const [isSkipConfigPanelOpen, setIsSkipConfigPanelOpen] = useState(false);
 
+  // 弹幕设置面板状态
+  const [isDanmuSettingsPanelOpen, setIsDanmuSettingsPanelOpen] =
+    useState(false);
+
   // Toast 通知状态
   const [toast, setToast] = useState<{
     show: boolean;
@@ -265,6 +273,23 @@ function PlayPageClient() {
 
   // Wake Lock 相关
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+
+  // 弹幕插件引用 (预留供未来扩展)
+  const _danmukuPluginRef = useRef<any>(null);
+
+  // 弹幕 Hook
+  const {
+    danmuList,
+    loading: danmuLoading,
+    settings: danmuSettings,
+    updateSettings: updateDanmuSettings,
+    reload: reloadDanmu,
+  } = useDanmu({
+    doubanId: videoDoubanId || undefined,
+    title: videoTitle,
+    year: videoYear,
+    episode: currentEpisodeIndex + 1,
+  });
 
   // -----------------------------------------------------------------------------
   // 工具函数（Utils）
@@ -1591,6 +1616,39 @@ function PlayPageClient() {
               handleNextEpisode();
             },
           },
+          // 弹幕设置按钮
+          {
+            position: 'right',
+            index: 10,
+            html: `<i class="art-icon flex" style="padding: 0 5px;"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM4 8h4M4 12h8M4 16h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></i>`,
+            tooltip: '弹幕设置',
+            click: function () {
+              setIsDanmuSettingsPanelOpen(true);
+            },
+          },
+        ],
+        // 弹幕插件 - 始终加载，通过 visible 控制显示/隐藏
+        plugins: [
+          artplayerPluginDanmuku({
+            danmuku: [], // 初始为空，后续通过 load() 加载
+            speed: danmuSettings.speed,
+            opacity: danmuSettings.opacity,
+            fontSize: danmuSettings.fontSize,
+            color: '#FFFFFF',
+            mode: 0,
+            margin: danmuSettings.margin,
+            antiOverlap: danmuSettings.antiOverlap,
+            synchronousPlayback: false,
+            filter: (danmu: any) => {
+              // 根据设置的模式过滤
+              return danmuSettings.modes.includes(danmu.mode ?? 0);
+            },
+            lockTime: 5,
+            maxLength: 200,
+            theme: 'dark',
+            heatmap: false,
+            visible: danmuSettings.enabled && danmuSettings.visible,
+          }),
         ],
       });
 
@@ -1767,6 +1825,54 @@ function PlayPageClient() {
       setError('播放器初始化失败');
     }
   }, [Artplayer, Hls, videoUrl, loading, blockAdEnabled]);
+
+  // 弹幕数据/设置变化时更新弹幕插件
+  useEffect(() => {
+    if (!artPlayerRef.current) return;
+
+    // 获取弹幕插件实例（始终加载）
+    const danmuku = artPlayerRef.current.plugins?.artplayerPluginDanmuku;
+    if (!danmuku) return;
+
+    // 更新弹幕配置
+    try {
+      danmuku.config({
+        speed: danmuSettings.speed,
+        opacity: danmuSettings.opacity,
+        fontSize: danmuSettings.fontSize,
+        antiOverlap: danmuSettings.antiOverlap,
+      });
+
+      // 根据启用状态和可见性控制显示
+      if (danmuSettings.enabled && danmuSettings.visible) {
+        danmuku.show();
+      } else {
+        danmuku.hide();
+      }
+
+      // 如果启用且有弹幕数据，加载弹幕
+      if (danmuSettings.enabled && danmuList.length > 0) {
+        danmuku.load(
+          danmuList.map((d: DanmuItem) => ({
+            text: d.text,
+            time: d.time,
+            color: d.color || '#FFFFFF',
+            mode: d.mode ?? 0,
+          })),
+        );
+      }
+
+      console.log(
+        '[Danmu] Updated config, enabled:',
+        danmuSettings.enabled,
+        'loaded:',
+        danmuList.length,
+        'danmu',
+      );
+    } catch (err) {
+      console.error('[Danmu] Failed to update danmuku plugin:', err);
+    }
+  }, [danmuList, danmuSettings]);
 
   // 当组件卸载时清理定时器、Wake Lock 和播放器资源
   useEffect(() => {
@@ -2079,6 +2185,17 @@ function PlayPageClient() {
                   className='bg-black w-full h-full rounded-xl overflow-hidden shadow-lg'
                 ></div>
 
+                {/* 弹幕设置面板 - 定位在播放器内部 */}
+                <DanmuSettingsPanel
+                  isOpen={isDanmuSettingsPanelOpen}
+                  onClose={() => setIsDanmuSettingsPanelOpen(false)}
+                  settings={danmuSettings}
+                  onSettingsChange={updateDanmuSettings}
+                  danmuCount={danmuList.length}
+                  loading={danmuLoading}
+                  onReload={reloadDanmu}
+                />
+
                 {/* 换源加载提示 - 使用播放器自带的加载动画 */}
                 {isVideoLoading && (
                   <div className='absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm rounded-xl'>
@@ -2255,8 +2372,10 @@ const DoubanInfoSection = ({ doubanId }: { doubanId: number }) => {
   const {
     detail: doubanDetail,
     comments,
+    recommends,
     detailLoading,
     commentsLoading,
+    recommendsLoading,
     commentsTotal,
   } = useDoubanInfo(doubanId > 0 ? doubanId : null);
 
@@ -2274,6 +2393,13 @@ const DoubanInfoSection = ({ doubanId }: { doubanId: number }) => {
         showCast={true}
         showSummary={true}
         showTags={true}
+      />
+
+      {/* 相关推荐 */}
+      <MovieRecommends
+        recommends={recommends}
+        loading={recommendsLoading}
+        maxDisplay={10}
       />
 
       {/* 短评列表 */}

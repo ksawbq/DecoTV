@@ -2,23 +2,21 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 
-import { getAuthInfoFromCookie } from '@/lib/auth';
+import { verifyApiAuth } from '@/lib/auth';
 import { getConfig, getLocalModeConfig } from '@/lib/config';
 import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
-  const storageType = process.env.NEXT_PUBLIC_STORAGE_TYPE || 'localstorage';
-  const hasRedis = !!(process.env.REDIS_URL || process.env.KV_REST_API_URL);
-  const isLocalMode = storageType === 'localstorage' && !hasRedis;
+  // 🔐 使用统一认证函数，正确处理 localstorage 和数据库模式的差异
+  const authResult = verifyApiAuth(request);
 
   try {
     const body = await request.json();
 
-    // 🔐 本地模式（无数据库）：跳过认证，返回成功
-    // 安全性说明：仅当没有配置任何数据库时才启用此模式
-    if (isLocalMode) {
+    // 本地模式（无数据库）：跳过认证，返回成功
+    if (authResult.isLocalMode) {
       const {
         SiteName,
         Announcement,
@@ -30,6 +28,7 @@ export async function POST(request: NextRequest) {
         DoubanImageProxy,
         DisableYellowFilter,
         FluidSearch,
+        LoginBackground,
       } = body as {
         SiteName: string;
         Announcement: string;
@@ -41,6 +40,7 @@ export async function POST(request: NextRequest) {
         DoubanImageProxy: string;
         DisableYellowFilter: boolean;
         FluidSearch: boolean;
+        LoginBackground?: string;
       };
 
       const localConfig = getLocalModeConfig();
@@ -55,6 +55,7 @@ export async function POST(request: NextRequest) {
         DoubanImageProxy,
         DisableYellowFilter,
         FluidSearch,
+        LoginBackground,
       };
       return NextResponse.json({
         message: '站点配置更新成功（本地模式）',
@@ -62,11 +63,16 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const authInfo = getAuthInfoFromCookie(request);
-    if (!authInfo || !authInfo.username) {
+    // 认证失败
+    if (!authResult.isValid) {
+      console.log('[admin/site] 认证失败:', {
+        hasAuth: !!request.cookies.get('auth'),
+        isLocalMode: authResult.isLocalMode,
+      });
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    const username = authInfo.username;
+
+    const username = authResult.username;
 
     const {
       SiteName,
@@ -79,6 +85,7 @@ export async function POST(request: NextRequest) {
       DoubanImageProxy,
       DisableYellowFilter,
       FluidSearch,
+      LoginBackground,
     } = body as {
       SiteName: string;
       Announcement: string;
@@ -90,6 +97,7 @@ export async function POST(request: NextRequest) {
       DoubanImageProxy: string;
       DisableYellowFilter: boolean;
       FluidSearch: boolean;
+      LoginBackground?: string;
     };
 
     // 参数校验
@@ -133,6 +141,7 @@ export async function POST(request: NextRequest) {
       DoubanImageProxy,
       DisableYellowFilter,
       FluidSearch,
+      LoginBackground: LoginBackground || '',
     };
 
     // 写入数据库
