@@ -3,6 +3,7 @@
 import { db } from '@/lib/db';
 
 import { AdminConfig } from './admin.types';
+import { getDefaultPanSouConfig, normalizePanSouConfig } from './pansou';
 
 export interface ApiSite {
   key: string;
@@ -235,6 +236,7 @@ async function getInitConfig(
     SourceConfig: [],
     CustomCategories: [],
     LiveConfig: [],
+    PanSouConfig: getDefaultPanSouConfig(),
   };
 
   // 补充用户信息
@@ -345,6 +347,7 @@ export function getLocalModeConfig(): AdminConfig {
     SourceConfig: [],
     CustomCategories: [],
     LiveConfig: [],
+    PanSouConfig: getDefaultPanSouConfig(),
   };
   return adminConfig;
 }
@@ -397,6 +400,7 @@ export function configSelfCheck(adminConfig: AdminConfig): AdminConfig {
   if (!adminConfig.LiveConfig || !Array.isArray(adminConfig.LiveConfig)) {
     adminConfig.LiveConfig = [];
   }
+  adminConfig.PanSouConfig = normalizePanSouConfig(adminConfig.PanSouConfig);
 
   // 站长变更自检
   const ownerUser = process.env.USERNAME;

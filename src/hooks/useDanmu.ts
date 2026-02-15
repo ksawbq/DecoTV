@@ -3,65 +3,59 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// ============================================================================
-// Types
-// ============================================================================
-
-/** 弹幕数据项 */
 export interface DanmuItem {
-  /** 弹幕出现时间（秒） */
   time: number;
-  /** 弹幕文本内容 */
   text: string;
-  /** 弹幕颜色（十六进制） */
   color?: string;
-  /** 弹幕模式：0-滚动，1-顶部，2-底部 */
   mode?: 0 | 1 | 2;
-  /** 边框颜色 */
   border?: boolean;
 }
 
-/** 弹幕设置配置 */
 export interface DanmuSettings {
-  /** 是否启用外部弹幕 */
   enabled: boolean;
-  /** 字体大小 (12-48) */
   fontSize: number;
-  /** 滚动速度 (1-10) */
   speed: number;
-  /** 透明度 (0-1) */
   opacity: number;
-  /** 弹幕区域占比 (0-1) */
-  margin: [number, number]; // [top, bottom]
-  /** 启用的弹幕模式 */
-  modes: number[]; // [0, 1, 2] 对应 滚动/顶部/底部
-  /** 防重叠 */
+  margin: [number, number];
+  modes: number[];
   antiOverlap: boolean;
-  /** 是否显示弹幕 */
   visible: boolean;
 }
 
-/** useDanmu Hook 返回类型 */
-export interface UseDanmuResult {
-  /** 弹幕数据 */
-  danmuList: DanmuItem[];
-  /** 是否正在加载 */
-  loading: boolean;
-  /** 错误信息 */
-  error: Error | null;
-  /** 弹幕设置 */
-  settings: DanmuSettings;
-  /** 更新设置 */
-  updateSettings: (newSettings: Partial<DanmuSettings>) => void;
-  /** 重新加载弹幕 */
-  reload: () => Promise<void>;
-  /** 清空弹幕 */
-  clear: () => void;
+export interface DanmuMatchInfo {
+  animeId?: number;
+  animeTitle: string;
+  episodeTitle: string;
+  episodeId: number;
+  matchLevel: string;
 }
 
-// ============================================================================
-// Constants
-// ============================================================================
+export interface DanmuManualOverride {
+  animeId: number;
+  episodeId: number;
+  animeTitle?: string;
+  episodeTitle?: string;
+}
+
+export interface DanmuLoadMeta {
+  source: 'init' | 'cache' | 'network' | 'network-retry' | 'empty' | 'error';
+  loadedAt: number | null;
+  count: number;
+}
+
+export interface UseDanmuResult {
+  danmuList: DanmuItem[];
+  loading: boolean;
+  error: Error | null;
+  settings: DanmuSettings;
+  matchInfo: DanmuMatchInfo | null;
+  loadMeta: DanmuLoadMeta;
+  updateSettings: (newSettings: Partial<DanmuSettings>) => void;
+  reload: (options?: {
+    manualOverride?: DanmuManualOverride | null;
+  }) => Promise<number>;
+  clear: () => void;
+}
 
 const STORAGE_KEYS = {
   enabled: 'enable_external_danmu',
@@ -75,7 +69,7 @@ const STORAGE_KEYS = {
 } as const;
 
 const DEFAULT_SETTINGS: DanmuSettings = {
-  enabled: false,
+  enabled: true,
   fontSize: 25,
   speed: 5,
   opacity: 1,
@@ -85,13 +79,6 @@ const DEFAULT_SETTINGS: DanmuSettings = {
   visible: true,
 };
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/**
- * 从 localStorage 读取设置
- */
 function loadSettingsFromStorage(): DanmuSettings {
   if (typeof window === 'undefined') {
     return DEFAULT_SETTINGS;
@@ -99,7 +86,7 @@ function loadSettingsFromStorage(): DanmuSettings {
 
   try {
     return {
-      enabled: localStorage.getItem(STORAGE_KEYS.enabled) === 'true',
+      enabled: true,
       fontSize: parseInt(
         localStorage.getItem(STORAGE_KEYS.fontSize) || '25',
         10,
@@ -118,9 +105,6 @@ function loadSettingsFromStorage(): DanmuSettings {
   }
 }
 
-/**
- * 保存设置到 localStorage
- */
 function saveSettingsToStorage(settings: DanmuSettings): void {
   if (typeof window === 'undefined') return;
 
@@ -141,44 +125,35 @@ function saveSettingsToStorage(settings: DanmuSettings): void {
   }
 }
 
-// ============================================================================
-// Hook
-// ============================================================================
-
 interface UseDanmuParams {
-  /** 豆瓣 ID */
   doubanId?: number | string | null;
-  /** 影片标题 */
   title?: string;
-  /** 年份 */
   year?: string;
-  /** 集数（从 1 开始） */
   episode?: number;
+  manualOverride?: DanmuManualOverride | null;
 }
 
-/**
- * 弹幕 Hook
- * 负责外部弹幕的加载、缓存、设置管理
- */
 export function useDanmu(params: UseDanmuParams): UseDanmuResult {
-  const { doubanId, title, year, episode } = params;
+  const { doubanId, title, year, episode, manualOverride } = params;
 
-  // 状态
   const [danmuList, setDanmuList] = useState<DanmuItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [settings, setSettings] = useState<DanmuSettings>(DEFAULT_SETTINGS);
+  const [matchInfo, setMatchInfo] = useState<DanmuMatchInfo | null>(null);
+  const [loadMeta, setLoadMeta] = useState<DanmuLoadMeta>({
+    source: 'init',
+    loadedAt: null,
+    count: 0,
+  });
 
-  // 防抖 ref
   const debounceRef = useRef<NodeJS.Timeout | null>(null);
   const lastFetchKeyRef = useRef<string>('');
 
-  // 初始化设置
   useEffect(() => {
     setSettings(loadSettingsFromStorage());
   }, []);
 
-  // 生成缓存 key
   const getCacheKey = useCallback(() => {
     if (doubanId) {
       return `danmu_${doubanId}_${episode || 1}`;
@@ -189,127 +164,204 @@ export function useDanmu(params: UseDanmuParams): UseDanmuResult {
     return '';
   }, [doubanId, title, year, episode]);
 
-  // 加载弹幕
-  const fetchDanmu = useCallback(async () => {
-    if (!settings.enabled) {
-      setDanmuList([]);
-      return;
-    }
+  const fetchDanmu = useCallback(
+    async (options?: {
+      force?: boolean;
+      retryOnEmpty?: boolean;
+      manualOverride?: DanmuManualOverride | null;
+    }): Promise<number> => {
+      const force = options?.force === true;
+      const retryOnEmpty = options?.retryOnEmpty !== false;
+      const cacheKey = getCacheKey();
+      const activeManualOverride = options?.manualOverride ?? manualOverride;
+      const requestCacheKey =
+        cacheKey && activeManualOverride
+          ? `${cacheKey}__manual_${activeManualOverride.animeId}_${activeManualOverride.episodeId}`
+          : cacheKey;
 
-    const cacheKey = getCacheKey();
-    if (!cacheKey) {
-      setDanmuList([]);
-      return;
-    }
-
-    // 防止重复请求同一资源
-    if (cacheKey === lastFetchKeyRef.current && danmuList.length > 0) {
-      return;
-    }
-
-    // 尝试从缓存读取
-    try {
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        const parsedCache = JSON.parse(cached);
-        if (
-          parsedCache.timestamp &&
-          Date.now() - parsedCache.timestamp < 30 * 60 * 1000
-        ) {
-          setDanmuList(parsedCache.data);
-          lastFetchKeyRef.current = cacheKey;
-          console.log(
-            '[useDanmu] Loaded from cache:',
-            parsedCache.data.length,
-            'danmu',
-          );
-          return;
-        }
-      }
-    } catch {
-      // 缓存读取失败，继续请求
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const queryParams = new URLSearchParams();
-      if (doubanId) {
-        queryParams.set('douban_id', String(doubanId));
-      }
-      if (title) {
-        queryParams.set('title', title);
-      }
-      if (year) {
-        queryParams.set('year', year);
-      }
-      if (episode) {
-        queryParams.set('episode', String(episode));
-      }
-
-      const response = await fetch(
-        `/api/danmu-external?${queryParams.toString()}`,
-      );
-
-      if (!response.ok) {
-        throw new Error(`获取弹幕失败: ${response.status}`);
-      }
-
-      const data = await response.json();
-
-      if (data.code === 200 && Array.isArray(data.danmus)) {
-        const danmus: DanmuItem[] = data.danmus;
+      const applyResult = (
+        danmus: DanmuItem[],
+        match: DanmuMatchInfo | null,
+        source: DanmuLoadMeta['source'],
+      ) => {
+        const now = Date.now();
         setDanmuList(danmus);
-        lastFetchKeyRef.current = cacheKey;
+        setMatchInfo(match);
+        setLoadMeta({ source, loadedAt: now, count: danmus.length });
+        if (danmus.length > 0) {
+          lastFetchKeyRef.current = requestCacheKey;
+        }
 
-        // 缓存到 sessionStorage
         try {
           sessionStorage.setItem(
-            cacheKey,
+            requestCacheKey,
             JSON.stringify({
               data: danmus,
-              timestamp: Date.now(),
+              match: match || null,
+              timestamp: now,
             }),
           );
         } catch {
-          // 缓存失败，忽略
+          // ignore cache write error
+        }
+      };
+
+      const fetchFromApi = async (forceRefresh: boolean) => {
+        const queryParams = new URLSearchParams();
+        if (doubanId) queryParams.set('douban_id', String(doubanId));
+        if (title) queryParams.set('title', title);
+        if (year) queryParams.set('year', year);
+        if (episode) queryParams.set('episode', String(episode));
+        if (activeManualOverride?.animeId) {
+          queryParams.set('anime_id', String(activeManualOverride.animeId));
+        }
+        if (activeManualOverride?.episodeId) {
+          queryParams.set('episode_id', String(activeManualOverride.episodeId));
+        }
+        if (activeManualOverride?.animeTitle) {
+          queryParams.set('anime_title', activeManualOverride.animeTitle);
+        }
+        if (activeManualOverride?.episodeTitle) {
+          queryParams.set('episode_title', activeManualOverride.episodeTitle);
+        }
+        if (forceRefresh) queryParams.set('force', '1');
+
+        const response = await fetch(
+          `/api/danmu-external?${queryParams.toString()}`,
+          {
+            cache: forceRefresh ? 'no-store' : 'default',
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch danmu: ${response.status}`);
         }
 
-        console.log('[useDanmu] Fetched:', danmus.length, 'danmu');
-      } else {
+        const data = await response.json();
+        if (data.code !== 200 || !Array.isArray(data.danmus)) {
+          return {
+            danmus: [] as DanmuItem[],
+            match: null as DanmuMatchInfo | null,
+          };
+        }
+
+        return {
+          danmus: data.danmus as DanmuItem[],
+          match: (data.match || null) as DanmuMatchInfo | null,
+        };
+      };
+
+      if (!cacheKey) {
         setDanmuList([]);
+        setMatchInfo(null);
+        setLoadMeta({ source: 'empty', loadedAt: Date.now(), count: 0 });
+        return 0;
       }
-    } catch (err) {
-      console.error('[useDanmu] Fetch error:', err);
-      setError(err instanceof Error ? err : new Error('加载弹幕失败'));
-      setDanmuList([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [
-    settings.enabled,
-    doubanId,
-    title,
-    year,
-    episode,
-    getCacheKey,
-    danmuList.length,
-  ]);
 
-  // 监听参数变化，带防抖加载弹幕
+      if (
+        !force &&
+        requestCacheKey === lastFetchKeyRef.current &&
+        danmuList.length > 0
+      ) {
+        return danmuList.length;
+      }
+
+      if (!force) {
+        try {
+          const cached = sessionStorage.getItem(requestCacheKey);
+          if (cached) {
+            const parsedCache = JSON.parse(cached);
+            if (
+              parsedCache.timestamp &&
+              Date.now() - parsedCache.timestamp < 2 * 3600 * 1000
+            ) {
+              const cachedDanmu = Array.isArray(parsedCache.data)
+                ? (parsedCache.data as DanmuItem[])
+                : [];
+              const cachedMatch = (parsedCache.match ||
+                null) as DanmuMatchInfo | null;
+              setDanmuList(cachedDanmu);
+              setMatchInfo(cachedMatch);
+              setLoadMeta({
+                source: 'cache',
+                loadedAt: parsedCache.timestamp,
+                count: cachedDanmu.length,
+              });
+              lastFetchKeyRef.current = requestCacheKey;
+              console.log('[useDanmu] Cache hit:', cachedDanmu.length, 'danmu');
+              return cachedDanmu.length;
+            }
+          }
+        } catch {
+          // ignore cache parse error
+        }
+      }
+
+      setLoading(true);
+      setError(null);
+
+      try {
+        const primaryResult = await fetchFromApi(force);
+        if (primaryResult.danmus.length > 0) {
+          applyResult(primaryResult.danmus, primaryResult.match, 'network');
+          console.log(
+            '[useDanmu] Fetched:',
+            primaryResult.danmus.length,
+            'danmu',
+            primaryResult.match
+              ? `-> ${primaryResult.match.animeTitle} [${primaryResult.match.episodeTitle}]`
+              : '',
+          );
+          return primaryResult.danmus.length;
+        }
+
+        // Empty result can be transient; do one forced retry to reduce false negatives.
+        if (!force && retryOnEmpty) {
+          const retryResult = await fetchFromApi(true);
+          if (retryResult.danmus.length > 0) {
+            applyResult(retryResult.danmus, retryResult.match, 'network-retry');
+            console.log(
+              '[useDanmu] Retry fetched:',
+              retryResult.danmus.length,
+              'danmu',
+            );
+            return retryResult.danmus.length;
+          }
+          applyResult([], retryResult.match, 'empty');
+          return 0;
+        }
+
+        applyResult([], primaryResult.match, 'empty');
+        return 0;
+      } catch (err) {
+        console.error('[useDanmu] Fetch error:', err);
+        setError(
+          err instanceof Error ? err : new Error('Failed to load danmu'),
+        );
+        setDanmuList([]);
+        setMatchInfo(null);
+        setLoadMeta({ source: 'error', loadedAt: Date.now(), count: 0 });
+        return 0;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [
+      doubanId,
+      title,
+      year,
+      episode,
+      getCacheKey,
+      manualOverride,
+      danmuList.length,
+    ],
+  );
+
   useEffect(() => {
-    if (!settings.enabled) {
-      setDanmuList([]);
-      return;
-    }
-
-    // 清除之前的防抖
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
 
-    // 300ms 防抖
     debounceRef.current = setTimeout(() => {
       fetchDanmu();
     }, 300);
@@ -320,34 +372,53 @@ export function useDanmu(params: UseDanmuParams): UseDanmuResult {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings.enabled, doubanId, title, year, episode]);
+  }, [doubanId, title, year, episode, manualOverride]);
 
-  // 更新设置
   const updateSettings = useCallback((newSettings: Partial<DanmuSettings>) => {
     setSettings((prev) => {
+      const hasChanges = Object.entries(newSettings).some(([key, value]) => {
+        const settingKey = key as keyof DanmuSettings;
+        return !Object.is(prev[settingKey], value);
+      });
+
+      if (!hasChanges) return prev;
+
       const updated = { ...prev, ...newSettings };
       saveSettingsToStorage(updated);
       return updated;
     });
   }, []);
 
-  // 重新加载
-  const reload = useCallback(async () => {
-    lastFetchKeyRef.current = ''; // 清除缓存 key，强制重新请求
-    const cacheKey = getCacheKey();
-    if (cacheKey) {
-      try {
-        sessionStorage.removeItem(cacheKey);
-      } catch {
-        // ignore
+  const reload = useCallback(
+    async (options?: { manualOverride?: DanmuManualOverride | null }) => {
+      lastFetchKeyRef.current = '';
+      const cacheKey = getCacheKey();
+      if (cacheKey) {
+        try {
+          for (let i = sessionStorage.length - 1; i >= 0; i--) {
+            const key = sessionStorage.key(i);
+            if (!key) continue;
+            if (key === cacheKey || key.startsWith(`${cacheKey}__manual_`)) {
+              sessionStorage.removeItem(key);
+            }
+          }
+        } catch {
+          // ignore
+        }
       }
-    }
-    await fetchDanmu();
-  }, [fetchDanmu, getCacheKey]);
+      return fetchDanmu({
+        force: true,
+        retryOnEmpty: false,
+        manualOverride: options?.manualOverride,
+      });
+    },
+    [fetchDanmu, getCacheKey],
+  );
 
-  // 清空弹幕
   const clear = useCallback(() => {
     setDanmuList([]);
+    setMatchInfo(null);
+    setLoadMeta({ source: 'init', loadedAt: null, count: 0 });
     lastFetchKeyRef.current = '';
   }, []);
 
@@ -356,6 +427,8 @@ export function useDanmu(params: UseDanmuParams): UseDanmuResult {
     loading,
     error,
     settings,
+    matchInfo,
+    loadMeta,
     updateSettings,
     reload,
     clear,

@@ -4,6 +4,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { ApiSite } from '@/lib/config';
+import {
+  getStoredSourceBrowserValue,
+  setStoredSourceBrowserValue,
+  SOURCE_BROWSER_CHANGE_EVENT,
+  SOURCE_BROWSER_STORAGE_KEY,
+} from '@/lib/source-browser';
 
 // 源分类项
 export interface SourceCategory {
@@ -38,6 +44,10 @@ export interface UseSourceFilterReturn {
   ) => SourceCategory[];
 }
 
+export interface UseSourceFilterOptions {
+  syncWithGlobal?: boolean;
+}
+
 // 内容类型到分类关键词的映射（扩展关键词以提高匹配率）
 const CONTENT_TYPE_KEYWORDS: Record<string, string[]> = {
   movie: ['电影', '影片', '大片', '院线', '4K', '蓝光', '片'],
@@ -60,9 +70,14 @@ const CONTENT_TYPE_KEYWORDS: Record<string, string[]> = {
  * 数据源筛选 Hook
  * 用于获取可用源列表、源分类，实现数据源优先的筛选逻辑
  */
-export function useSourceFilter(): UseSourceFilterReturn {
+export function useSourceFilter(
+  options: UseSourceFilterOptions = {},
+): UseSourceFilterReturn {
+  const { syncWithGlobal = true } = options;
   const [sources, setSources] = useState<ApiSite[]>([]);
-  const [currentSource, setCurrentSourceState] = useState<string>('auto');
+  const [currentSource, setCurrentSourceState] = useState<string>(() =>
+    syncWithGlobal ? getStoredSourceBrowserValue() : 'auto',
+  );
   const [sourceCategories, setSourceCategories] = useState<SourceCategory[]>(
     [],
   );
@@ -110,14 +125,13 @@ export function useSourceFilter(): UseSourceFilterReturn {
         }
 
         // 构建分类 API URL - 资源站通用格式
-        const apiUrl = source.api.endsWith('/')
+        const originalApiUrl = source.api.endsWith('/')
           ? `${source.api}?ac=class`
           : `${source.api}/?ac=class`;
+        const apiUrl = `/api/proxy/cms?url=${encodeURIComponent(originalApiUrl)}`;
 
         const response = await fetch(apiUrl, {
           headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             Accept: 'application/json',
           },
         });
@@ -143,14 +157,13 @@ export function useSourceFilter(): UseSourceFilterReturn {
   // 切换当前源
   const setCurrentSource = useCallback(
     (sourceKey: string) => {
-      setCurrentSourceState(sourceKey);
-      if (sourceKey !== 'auto') {
-        fetchSourceCategories(sourceKey);
-      } else {
-        setSourceCategories([]);
+      const nextSource = sourceKey || 'auto';
+      setCurrentSourceState(nextSource);
+      if (syncWithGlobal) {
+        setStoredSourceBrowserValue(nextSource);
       }
     },
-    [fetchSourceCategories],
+    [syncWithGlobal],
   );
 
   // 根据内容类型过滤分类（带智能兜底）
@@ -197,6 +210,55 @@ export function useSourceFilter(): UseSourceFilterReturn {
   useEffect(() => {
     fetchSources();
   }, [fetchSources]);
+
+  // 同步其他页面更新的数据源（源浏览器 -> 豆瓣页）
+  useEffect(() => {
+    if (!syncWithGlobal) return;
+
+    const handleSourceChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ sourceKey?: string }>).detail;
+      const nextSource = detail?.sourceKey || getStoredSourceBrowserValue();
+      setCurrentSourceState((prev) =>
+        prev === nextSource ? prev : nextSource,
+      );
+    };
+
+    const handleStorageChange = (
+      event: Event & { key?: string | null; newValue?: string | null },
+    ) => {
+      if (event.key !== SOURCE_BROWSER_STORAGE_KEY) return;
+      const nextSource = event.newValue || 'auto';
+      setCurrentSourceState((prev) =>
+        prev === nextSource ? prev : nextSource,
+      );
+    };
+
+    window.addEventListener(
+      SOURCE_BROWSER_CHANGE_EVENT,
+      handleSourceChange as EventListener,
+    );
+    window.addEventListener('storage', handleStorageChange as EventListener);
+    return () => {
+      window.removeEventListener(
+        SOURCE_BROWSER_CHANGE_EVENT,
+        handleSourceChange as EventListener,
+      );
+      window.removeEventListener(
+        'storage',
+        handleStorageChange as EventListener,
+      );
+    };
+  }, [syncWithGlobal]);
+
+  // 当前源变化后自动拉取分类（用于源浏览器统一控制）
+  useEffect(() => {
+    if (currentSource === 'auto') {
+      setSourceCategories([]);
+      return;
+    }
+    if (sources.length === 0) return;
+    fetchSourceCategories(currentSource);
+  }, [currentSource, sources.length, fetchSourceCategories]);
 
   return {
     sources,
