@@ -15,7 +15,13 @@ interface ApiSearchItem {
   vod_year?: string;
   vod_content?: string;
   vod_douban_id?: number;
+  vod_tmdb_id?: number | string;
   type_name?: string;
+}
+
+function normalizeNumericId(value: unknown): number | undefined {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 const M3U8_EXTENSION_REGEX = /\.m3u8(?=$|[?#])/i;
@@ -77,6 +83,11 @@ async function searchWithCache(
 
     // 处理结果数据
     const allResults = data.list.map((item: ApiSearchItem) => {
+      // 防止上游返回的条目缺少必要字段导致崩溃
+      if (!item || !item.vod_id || !item.vod_name) {
+        return null;
+      }
+
       let episodes: string[] = [];
       let titles: string[] = [];
 
@@ -121,12 +132,14 @@ async function searchWithCache(
         desc: cleanHtmlTags(item.vod_content || ''),
         type_name: item.type_name,
         douban_id: item.vod_douban_id,
+        tmdb_id: normalizeNumericId(item.vod_tmdb_id),
       };
     });
 
-    // 过滤掉集数为 0 的结果
+    // 过滤掉无效条目和集数为 0 的结果
     const results = allResults.filter(
-      (result: SearchResult) => result.episodes.length > 0,
+      (result: SearchResult | null) =>
+        result !== null && result.episodes.length > 0,
     );
 
     const pageCount = page === 1 ? data.pagecount || 1 : undefined;
@@ -307,6 +320,7 @@ export async function getDetailFromApi(
     desc: cleanHtmlTags(videoDetail.vod_content),
     type_name: videoDetail.type_name,
     douban_id: videoDetail.vod_douban_id,
+    tmdb_id: normalizeNumericId(videoDetail.vod_tmdb_id),
   };
 }
 
